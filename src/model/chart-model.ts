@@ -14,6 +14,7 @@ import { Coordinate } from './coordinate';
 import { Crosshair, CrosshairOptions } from './crosshair';
 import { DefaultPriceScaleId, isDefaultPriceScale } from './default-price-scale';
 import { GridOptions } from './grid';
+import { IHorzScaleBehavior } from './ihorz-scale-behavior';
 import { InvalidateMask, InvalidationLevel, ITimeScaleAnimation } from './invalidate-mask';
 import { IPriceDataSource } from './iprice-data-source';
 import { ColorType, LayoutOptions } from './layout-options';
@@ -167,14 +168,14 @@ export interface HoveredObject {
 	externalId?: string;
 }
 
-export interface HoveredSource {
-	source: IPriceDataSource;
+export interface HoveredSource<HorzScaleItem> {
+	source: IPriceDataSource<HorzScaleItem>;
 	object?: HoveredObject;
 }
 
-export interface PriceScaleOnPane {
-	priceScale: PriceScale;
-	pane: Pane;
+export interface PriceScaleOnPane<HorzScaleItem> {
+	priceScale: PriceScale<HorzScaleItem>;
+	pane: Pane<HorzScaleItem>;
 }
 
 const enum BackgroundColorSide {
@@ -232,7 +233,7 @@ export interface TrackingModeOptions {
 /**
  * Structure describing options of the chart. Series options are to be set separately
  */
-export interface ChartOptions {
+export interface ChartOptions<HorzScaleItem> {
 	/**
 	 * Width of the chart in pixels
 	 *
@@ -294,7 +295,7 @@ export interface ChartOptions {
 	/**
 	 * Localization options.
 	 */
-	localization: LocalizationOptions;
+	localization: LocalizationOptions<HorzScaleItem>;
 
 	/**
 	 * Scroll options, or a boolean flag that enables/disables scrolling
@@ -318,8 +319,8 @@ export interface ChartOptions {
 
 }
 
-export type ChartOptionsInternal =
-	Omit<ChartOptions, 'handleScroll' | 'handleScale' | 'layout'>
+export type ChartOptionsInternal<HorzScaleItem> =
+	Omit<ChartOptions<HorzScaleItem>, 'handleScroll' | 'handleScale' | 'layout'>
 	& {
 		/** @public */
 		handleScroll: HandleScrollOptions;
@@ -335,22 +336,22 @@ interface GradientColorsCache {
 	colors: Map<number, string>;
 }
 
-export class ChartModel implements IDestroyable {
-	private readonly _options: ChartOptionsInternal;
+export class ChartModel<HorzScaleItem> implements IDestroyable {
+	private readonly _options: ChartOptionsInternal<HorzScaleItem>;
 	private readonly _invalidateHandler: InvalidateHandler;
 
-	private readonly _rendererOptionsProvider: PriceAxisRendererOptionsProvider;
+	private readonly _rendererOptionsProvider: PriceAxisRendererOptionsProvider<HorzScaleItem>;
 
-	private readonly _timeScale: TimeScale;
-	private readonly _panes: Pane[] = [];
-	private readonly _crosshair: Crosshair;
-	private readonly _magnet: Magnet;
-	private readonly _watermark: Watermark;
+	private readonly _timeScale: TimeScale<HorzScaleItem>;
+	private readonly _panes: Pane<HorzScaleItem>[] = [];
+	private readonly _crosshair: Crosshair<HorzScaleItem>;
+	private readonly _magnet: Magnet<HorzScaleItem>;
+	private readonly _watermark: Watermark<HorzScaleItem>;
 
-	private _serieses: Series[] = [];
+	private _serieses: Series<SeriesType, HorzScaleItem>[] = [];
 
 	private _width: number = 0;
-	private _hoveredSource: HoveredSource | null = null;
+	private _hoveredSource: HoveredSource<HorzScaleItem> | null = null;
 	private readonly _priceScalesOptionsChanged: Delegate = new Delegate();
 	private _crosshairMoved: Delegate<TimePointIndex | null, Point | null, TouchMouseEventData | null> = new Delegate();
 
@@ -358,13 +359,16 @@ export class ChartModel implements IDestroyable {
 	private _backgroundBottomColor: string;
 	private _gradientColorsCache: GradientColorsCache | null = null;
 
-	public constructor(invalidateHandler: InvalidateHandler, options: ChartOptionsInternal) {
+	private readonly _horzScaleBehavior: IHorzScaleBehavior<HorzScaleItem>;
+
+	public constructor(invalidateHandler: InvalidateHandler, options: ChartOptionsInternal<HorzScaleItem>, horzScaleBehavior: IHorzScaleBehavior<HorzScaleItem>) {
 		this._invalidateHandler = invalidateHandler;
 		this._options = options;
+		this._horzScaleBehavior = horzScaleBehavior;
 
 		this._rendererOptionsProvider = new PriceAxisRendererOptionsProvider(this);
 
-		this._timeScale = new TimeScale(this, options.timeScale, this._options.localization);
+		this._timeScale = new TimeScale(this, options.timeScale, this._options.localization, horzScaleBehavior);
 		this._crosshair = new Crosshair(this, options.crosshair);
 		this._magnet = new Magnet(options.crosshair);
 		this._watermark = new Watermark(this, options.watermark);
@@ -388,16 +392,16 @@ export class ChartModel implements IDestroyable {
 		this._invalidate(new InvalidateMask(InvalidationLevel.Cursor));
 	}
 
-	public updateSource(source: IPriceDataSource): void {
+	public updateSource(source: IPriceDataSource<HorzScaleItem>): void {
 		const inv = this._invalidationMaskForSource(source);
 		this._invalidate(inv);
 	}
 
-	public hoveredSource(): HoveredSource | null {
+	public hoveredSource(): HoveredSource<HorzScaleItem> | null {
 		return this._hoveredSource;
 	}
 
-	public setHoveredSource(source: HoveredSource | null): void {
+	public setHoveredSource(source: HoveredSource<HorzScaleItem> | null): void {
 		const prevSource = this._hoveredSource;
 		this._hoveredSource = source;
 		if (prevSource !== null) {
@@ -408,14 +412,14 @@ export class ChartModel implements IDestroyable {
 		}
 	}
 
-	public options(): Readonly<ChartOptionsInternal> {
+	public options(): Readonly<ChartOptionsInternal<HorzScaleItem>> {
 		return this._options;
 	}
 
-	public applyOptions(options: DeepPartial<ChartOptionsInternal>): void {
+	public applyOptions(options: DeepPartial<ChartOptionsInternal<HorzScaleItem>>): void {
 		merge(this._options, options);
 
-		this._panes.forEach((p: Pane) => p.applyScaleOptions(options));
+		this._panes.forEach((p: Pane<HorzScaleItem>) => p.applyScaleOptions(options));
 
 		if (options.timeScale !== undefined) {
 			this._timeScale.applyOptions(options.timeScale);
@@ -462,7 +466,7 @@ export class ChartModel implements IDestroyable {
 		this._priceScalesOptionsChanged.fire();
 	}
 
-	public findPriceScale(priceScaleId: string): PriceScaleOnPane | null {
+	public findPriceScale(priceScaleId: string): PriceScaleOnPane<HorzScaleItem> | null {
 		for (const pane of this._panes) {
 			const priceScale = pane.priceScaleById(priceScaleId);
 			if (priceScale !== null) {
@@ -475,19 +479,19 @@ export class ChartModel implements IDestroyable {
 		return null;
 	}
 
-	public timeScale(): TimeScale {
+	public timeScale(): TimeScale<HorzScaleItem> {
 		return this._timeScale;
 	}
 
-	public panes(): readonly Pane[] {
+	public panes(): readonly Pane<HorzScaleItem>[] {
 		return this._panes;
 	}
 
-	public watermarkSource(): Watermark {
+	public watermarkSource(): Watermark<HorzScaleItem> {
 		return this._watermark;
 	}
 
-	public crosshairSource(): Crosshair {
+	public crosshairSource(): Crosshair<HorzScaleItem> {
 		return this._crosshair;
 	}
 
@@ -495,7 +499,7 @@ export class ChartModel implements IDestroyable {
 		return this._crosshairMoved;
 	}
 
-	public setPaneHeight(pane: Pane, height: number): void {
+	public setPaneHeight(pane: Pane<HorzScaleItem>, height: number): void {
 		pane.setHeight(height);
 		this.recalculateAllPanes();
 	}
@@ -503,11 +507,11 @@ export class ChartModel implements IDestroyable {
 	public setWidth(width: number): void {
 		this._width = width;
 		this._timeScale.setWidth(this._width);
-		this._panes.forEach((pane: Pane) => pane.setWidth(width));
+		this._panes.forEach((pane: Pane<HorzScaleItem>) => pane.setWidth(width));
 		this.recalculateAllPanes();
 	}
 
-	public createPane(index?: number): Pane {
+	public createPane(index?: number): Pane<HorzScaleItem> {
 		const pane = new Pane(this._timeScale, this);
 
 		if (index !== undefined) {
@@ -533,29 +537,29 @@ export class ChartModel implements IDestroyable {
 		return pane;
 	}
 
-	public startScalePrice(pane: Pane, priceScale: PriceScale, x: number): void {
+	public startScalePrice(pane: Pane<HorzScaleItem>, priceScale: PriceScale<HorzScaleItem>, x: number): void {
 		pane.startScalePrice(priceScale, x);
 	}
 
-	public scalePriceTo(pane: Pane, priceScale: PriceScale, x: number): void {
+	public scalePriceTo(pane: Pane<HorzScaleItem>, priceScale: PriceScale<HorzScaleItem>, x: number): void {
 		pane.scalePriceTo(priceScale, x);
 		this.updateCrosshair();
 		this._invalidate(this._paneInvalidationMask(pane, InvalidationLevel.Light));
 	}
 
-	public endScalePrice(pane: Pane, priceScale: PriceScale): void {
+	public endScalePrice(pane: Pane<HorzScaleItem>, priceScale: PriceScale<HorzScaleItem>): void {
 		pane.endScalePrice(priceScale);
 		this._invalidate(this._paneInvalidationMask(pane, InvalidationLevel.Light));
 	}
 
-	public startScrollPrice(pane: Pane, priceScale: PriceScale, x: number): void {
+	public startScrollPrice(pane: Pane<HorzScaleItem>, priceScale: PriceScale<HorzScaleItem>, x: number): void {
 		if (priceScale.isAutoScale()) {
 			return;
 		}
 		pane.startScrollPrice(priceScale, x);
 	}
 
-	public scrollPriceTo(pane: Pane, priceScale: PriceScale, x: number): void {
+	public scrollPriceTo(pane: Pane<HorzScaleItem>, priceScale: PriceScale<HorzScaleItem>, x: number): void {
 		if (priceScale.isAutoScale()) {
 			return;
 		}
@@ -564,7 +568,7 @@ export class ChartModel implements IDestroyable {
 		this._invalidate(this._paneInvalidationMask(pane, InvalidationLevel.Light));
 	}
 
-	public endScrollPrice(pane: Pane, priceScale: PriceScale): void {
+	public endScrollPrice(pane: Pane<HorzScaleItem>, priceScale: PriceScale<HorzScaleItem>): void {
 		if (priceScale.isAutoScale()) {
 			return;
 		}
@@ -572,7 +576,7 @@ export class ChartModel implements IDestroyable {
 		this._invalidate(this._paneInvalidationMask(pane, InvalidationLevel.Light));
 	}
 
-	public resetPriceScale(pane: Pane, priceScale: PriceScale): void {
+	public resetPriceScale(pane: Pane<HorzScaleItem>, priceScale: PriceScale<HorzScaleItem>): void {
 		pane.resetPriceScale(priceScale);
 		this._invalidate(this._paneInvalidationMask(pane, InvalidationLevel.Light));
 	}
@@ -631,11 +635,11 @@ export class ChartModel implements IDestroyable {
 		this.lightUpdate();
 	}
 
-	public serieses(): readonly Series[] {
+	public serieses(): readonly Series<SeriesType, HorzScaleItem>[] {
 		return this._serieses;
 	}
 
-	public setAndSaveCurrentPosition(x: Coordinate, y: Coordinate, event: TouchMouseEventData | null, pane: Pane): void {
+	public setAndSaveCurrentPosition(x: Coordinate, y: Coordinate, event: TouchMouseEventData | null, pane: Pane<HorzScaleItem>): void {
 		this._crosshair.saveOriginCoord(x, y);
 		let price = NaN;
 		let index = this._timeScale.coordinateToIndex(x);
@@ -677,7 +681,7 @@ export class ChartModel implements IDestroyable {
 		this._crosshair.updateAllViews();
 	}
 
-	public updateTimeScale(newBaseIndex: TimePointIndex | null, newPoints?: readonly TimeScalePoint[], firstChangedPointIndex?: number): void {
+	public updateTimeScale(newBaseIndex: TimePointIndex | null, newPoints?: readonly TimeScalePoint<HorzScaleItem>[], firstChangedPointIndex?: number): void {
 		const oldFirstTime = this._timeScale.indexToTime(0 as TimePointIndex);
 
 		if (newPoints !== undefined && firstChangedPointIndex !== undefined) {
@@ -694,7 +698,7 @@ export class ChartModel implements IDestroyable {
 		// (and actually we cannot)
 		if (visibleBars !== null && oldFirstTime !== null && newFirstTime !== null) {
 			const isLastSeriesBarVisible = visibleBars.contains(currentBaseIndex);
-			const isLeftBarShiftToLeft = oldFirstTime.timestamp > newFirstTime.timestamp;
+			const isLeftBarShiftToLeft = this._horzScaleBehavior.key(oldFirstTime) > this._horzScaleBehavior.key(newFirstTime);
 			const isSeriesPointsAdded = newBaseIndex !== null && newBaseIndex > currentBaseIndex;
 			const isSeriesPointsAddedToRight = isSeriesPointsAdded && !isLeftBarShiftToLeft;
 
@@ -708,25 +712,25 @@ export class ChartModel implements IDestroyable {
 		this._timeScale.setBaseIndex(newBaseIndex);
 	}
 
-	public recalculatePane(pane: Pane | null): void {
+	public recalculatePane(pane: Pane<HorzScaleItem> | null): void {
 		if (pane !== null) {
 			pane.recalculate();
 		}
 	}
 
-	public paneForSource(source: IPriceDataSource): Pane | null {
-		const pane = this._panes.find((p: Pane) => p.orderedSources().includes(source));
+	public paneForSource(source: IPriceDataSource<HorzScaleItem>): Pane<HorzScaleItem> | null {
+		const pane = this._panes.find((p: Pane<HorzScaleItem>) => p.orderedSources().includes(source));
 		return pane === undefined ? null : pane;
 	}
 
 	public recalculateAllPanes(): void {
 		this._watermark.updateAllViews();
-		this._panes.forEach((p: Pane) => p.recalculate());
+		this._panes.forEach((p: Pane<HorzScaleItem>) => p.recalculate());
 		this.updateCrosshair();
 	}
 
 	public destroy(): void {
-		this._panes.forEach((p: Pane) => p.destroy());
+		this._panes.forEach((p: Pane<HorzScaleItem>) => p.destroy());
 		this._panes.length = 0;
 
 		// to avoid memleaks
@@ -734,7 +738,7 @@ export class ChartModel implements IDestroyable {
 		this._options.localization.timeFormatter = undefined;
 	}
 
-	public rendererOptionsProvider(): PriceAxisRendererOptionsProvider {
+	public rendererOptionsProvider(): PriceAxisRendererOptionsProvider<HorzScaleItem> {
 		return this._rendererOptionsProvider;
 	}
 
@@ -746,7 +750,7 @@ export class ChartModel implements IDestroyable {
 		return this._priceScalesOptionsChanged;
 	}
 
-	public createSeries<T extends SeriesType>(seriesType: T, options: SeriesOptionsMap[T]): Series<T> {
+	public createSeries<T extends SeriesType>(seriesType: T, options: SeriesOptionsMap[T]): Series<T, HorzScaleItem> {
 		const pane = this._panes[0];
 		const series = this._createSeries(options, seriesType, pane);
 		this._serieses.push(series);
@@ -761,7 +765,7 @@ export class ChartModel implements IDestroyable {
 		return series;
 	}
 
-	public removeSeries(series: Series): void {
+	public removeSeries(series: Series<SeriesType, HorzScaleItem>): void {
 		const pane = this.paneForSource(series);
 
 		const seriesIndex = this._serieses.indexOf(series);
@@ -774,7 +778,7 @@ export class ChartModel implements IDestroyable {
 		}
 	}
 
-	public moveSeriesToScale(series: Series, targetScaleId: string): void {
+	public moveSeriesToScale(series: Series<SeriesType, HorzScaleItem>, targetScaleId: string): void {
 		const pane = ensureNotNull(this.paneForSource(series));
 		pane.removeDataSource(series);
 
@@ -879,7 +883,7 @@ export class ChartModel implements IDestroyable {
 		return result;
 	}
 
-	private _paneInvalidationMask(pane: Pane | null, level: InvalidationLevel): InvalidateMask {
+	private _paneInvalidationMask(pane: Pane<HorzScaleItem> | null, level: InvalidationLevel): InvalidateMask {
 		const inv = new InvalidateMask(level);
 		if (pane !== null) {
 			const index = this._panes.indexOf(pane);
@@ -890,7 +894,7 @@ export class ChartModel implements IDestroyable {
 		return inv;
 	}
 
-	private _invalidationMaskForSource(source: IPriceDataSource, invalidateType?: InvalidationLevel): InvalidateMask {
+	private _invalidationMaskForSource(source: IPriceDataSource<HorzScaleItem>, invalidateType?: InvalidationLevel): InvalidateMask {
 		if (invalidateType === undefined) {
 			invalidateType = InvalidationLevel.Light;
 		}
@@ -903,11 +907,11 @@ export class ChartModel implements IDestroyable {
 			this._invalidateHandler(mask);
 		}
 
-		this._panes.forEach((pane: Pane) => pane.grid().paneView().update());
+		this._panes.forEach((pane: Pane<HorzScaleItem>) => pane.grid().paneView().update());
 	}
 
-	private _createSeries<T extends SeriesType>(options: SeriesOptionsInternal<T>, seriesType: T, pane: Pane): Series<T> {
-		const series = new Series<T>(this, options, seriesType);
+	private _createSeries<T extends SeriesType>(options: SeriesOptionsInternal<T>, seriesType: T, pane: Pane<HorzScaleItem>): Series<T, HorzScaleItem> {
+		const series = new Series<T, HorzScaleItem>(this, options, seriesType);
 
 		const targetScaleId = options.priceScaleId !== undefined ? options.priceScaleId : this.defaultVisiblePriceScaleId();
 		pane.addDataSource(series, targetScaleId);
